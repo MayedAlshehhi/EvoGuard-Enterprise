@@ -1,0 +1,16 @@
+{
+  "files": {
+    "main.css": "/EvoGuard-Enterprise/static/css/main.e996a8fc.css",
+    "main.js": "/EvoGuard-Enterprise/static/js/main.b13da3ef.js",
+    "static/js/453.03346f77.chunk.js": "/EvoGuard-Enterprise/static/js/453.03346f77.chunk.js",
+    "static/media/logo-icon.png": "/EvoGuard-Enterprise/static/media/logo-icon.e7b7a97ce318c7b2b79a.png",
+    "index.html": "/EvoGuard-Enterprise/index.html",
+    "main.e996a8fc.css.map": "/EvoGuard-Enterprise/static/css/main.e996a8fc.css.map",
+    "main.b13da3ef.js.map": "/EvoGuard-Enterprise/static/js/main.b13da3ef.js.map",
+    "453.03346f77.chunk.js.map": "/EvoGuard-Enterprise/static/js/453.03346f77.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.e996a8fc.css",
+    "static/js/main.b13da3ef.js"
+  ]
+}
