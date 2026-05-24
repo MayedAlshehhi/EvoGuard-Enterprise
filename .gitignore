@@ -18,6 +18,7 @@ yarn-error.log*
 *.db
 *.log
 *.codex-backup
+.tools/
 instance/
 backend/instance/
 reports/
