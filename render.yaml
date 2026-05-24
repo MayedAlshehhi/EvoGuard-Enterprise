@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: evoguard-enterprise-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd backend && python app.py
+    envVars:
+      - key: EVOGUARD_SECRET_KEY
+        generateValue: true
+      - key: EVOGUARD_DATABASE_URL
+        value: sqlite:///evoguard.db
+      - key: EVOGUARD_CORS_ORIGIN
+        value: https://mayedalshehhi.github.io,http://localhost:3000,http://127.0.0.1:3000
+      - key: EVOGUARD_DEFAULT_USERNAME
+        value: mayed
+      - key: EVOGUARD_DEFAULT_PASSWORD
+        value: mayed123
+      - key: EVOGUARD_ANALYST_EMAIL
+        value: evoguardzu@gmail.com
+      - key: EVOGUARD_ENABLE_SCHEDULER
+        value: false
