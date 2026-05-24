@@ -2601,12 +2601,20 @@ if __name__ == "__main__":
         seed_threat_intel_iocs()
 
     scheduler = start_scheduler()
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "5000"))
 
     try:
         if socketio:
-            socketio.run(app, debug=False, allow_unsafe_werkzeug=True)
+            socketio.run(
+                app,
+                host=host,
+                port=port,
+                debug=False,
+                allow_unsafe_werkzeug=True,
+            )
         else:
-            app.run(debug=False)
+            app.run(host=host, port=port, debug=False)
     finally:
         if scheduler:
             scheduler.shutdown()

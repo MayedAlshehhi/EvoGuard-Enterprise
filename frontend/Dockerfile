@@ -2,6 +2,9 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
+ARG REACT_APP_API_BASE_URL=http://127.0.0.1:5000
+ENV REACT_APP_API_BASE_URL=$REACT_APP_API_BASE_URL
+
 COPY frontend/package*.json ./
 RUN npm ci
 
