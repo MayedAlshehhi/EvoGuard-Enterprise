@@ -1,0 +1,5 @@
+{
+  "name": "evoguard-enterprise-workspace",
+  "private": true,
+  "description": "Root workspace metadata only. The React app lives in frontend/."
+}

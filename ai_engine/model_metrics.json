@@ -1,0 +1,13 @@
+{
+  "accuracy": 0.9979,
+  "accuracy_display": "99.79%",
+  "precision": null,
+  "recall": null,
+  "f1_score": null,
+  "dataset": "NSL-KDD",
+  "model": "RandomForestClassifier",
+  "last_trained": "Not recorded",
+  "selected_features_count": 20,
+  "metric_source": "initial_project_baseline",
+  "note": "Run ai_engine/train_optimized_model.py to refresh these metrics from the validation split."
+}

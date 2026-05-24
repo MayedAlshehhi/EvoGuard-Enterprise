@@ -1,0 +1,6 @@
+attack_type,attack_label,country,ip,source_activity
+dos,ddos,Russia,203.0.113.77,High-volume TCP flood targeting public service
+probe,probe scan,China,198.51.100.23,Repeated port scanning across exposed services
+r2l,credential attack,Germany,198.51.100.44,Repeated suspicious login attempts
+u2r,privilege escalation,Iran,203.0.113.91,Possible privilege escalation sequence
+normal,normal,UAE,192.0.2.10,Normal baseline network traffic
