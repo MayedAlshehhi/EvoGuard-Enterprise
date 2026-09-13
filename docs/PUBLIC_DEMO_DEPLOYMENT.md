@@ -31,8 +31,8 @@ Set these in the backend hosting provider:
 EVOGUARD_SECRET_KEY=change-this-to-a-long-random-value
 EVOGUARD_DATABASE_URL=sqlite:///evoguard.db
 EVOGUARD_CORS_ORIGIN=https://your-frontend-url
-EVOGUARD_DEFAULT_USERNAME=mayed
-EVOGUARD_DEFAULT_PASSWORD=mayed123
+EVOGUARD_DEFAULT_USERNAME=your-private-admin-username
+EVOGUARD_DEFAULT_PASSWORD=your-private-admin-password
 EVOGUARD_ANALYST_EMAIL=evoguardzu@gmail.com
 EVOGUARD_ENABLE_SCHEDULER=false
 ```

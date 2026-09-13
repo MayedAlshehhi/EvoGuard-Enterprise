@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import random
 import time
 import urllib.error
@@ -33,18 +34,28 @@ def random_ip():
     return ".".join(str(random.randint(1, 254)) for _ in range(4))
 
 
-def build_payload(event_type):
+def build_payload(event_type, sensor_name, target_asset, protocol, port):
     event = random.choice(EVENTS[event_type]).copy()
     event["ip"] = random_ip()
+    event["attack_type"] = event_type
+    event["sensor_name"] = sensor_name
+    event["target_asset"] = target_asset
+    event["network_protocol"] = protocol
+    event["destination_port"] = port
     return event
 
 
-def post_event(url, payload):
+def post_event(url, payload, api_key=None):
     body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+
+    if api_key:
+        headers["X-EvoGuard-Ingest-Key"] = api_key
+
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
 
@@ -62,6 +73,11 @@ def main():
     )
     parser.add_argument("--count", type=int, default=1, help="Number of events to send.")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between events.")
+    parser.add_argument("--api-key", default=os.getenv("EVOGUARD_INGEST_API_KEY"), help="Optional EvoGuard ingest API key.")
+    parser.add_argument("--sensor", default="CLI Sensor", help="Sensor name to attach to each event.")
+    parser.add_argument("--asset", default="UAE Protected Network", help="Target asset name.")
+    parser.add_argument("--protocol", default="tcp", help="Network protocol.")
+    parser.add_argument("--port", type=int, default=443, help="Destination port.")
     parser.add_argument(
         "--url",
         default="http://127.0.0.1:5000/ingest_event",
@@ -73,10 +89,16 @@ def main():
 
     for index in range(args.count):
         event_type = random.choice(event_types) if args.type == "random" else args.type
-        payload = build_payload(event_type)
+        payload = build_payload(
+            event_type,
+            args.sensor,
+            args.asset,
+            args.protocol,
+            args.port,
+        )
 
         try:
-            result = post_event(args.url, payload)
+            result = post_event(args.url, payload, args.api_key)
         except urllib.error.URLError as error:
             print(f"[ERROR] Could not reach EvoGuard backend: {error}")
             return 1

@@ -1,17 +1,23 @@
 import argparse
 import json
+import os
 import urllib.error
 import urllib.request
 
 
-def post_csv(url, csv_path):
+def post_csv(url, csv_path, api_key=None):
     with open(csv_path, "r", encoding="utf-8") as file:
         payload = {"csv": file.read()}
+
+    headers = {"Content-Type": "application/json"}
+
+    if api_key:
+        headers["X-EvoGuard-Ingest-Key"] = api_key
 
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
 
@@ -27,10 +33,15 @@ def main():
         default="http://127.0.0.1:5000/ingest_csv",
         help="EvoGuard CSV intake URL.",
     )
+    parser.add_argument(
+        "--api-key",
+        default=os.getenv("EVOGUARD_INGEST_API_KEY"),
+        help="Optional EvoGuard ingest API key.",
+    )
     args = parser.parse_args()
 
     try:
-        result = post_csv(args.url, args.csv_path)
+        result = post_csv(args.url, args.csv_path, args.api_key)
     except urllib.error.URLError as error:
         print(f"[ERROR] Could not reach EvoGuard backend: {error}")
         return 1

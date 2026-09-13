@@ -1,3 +1,9 @@
+databases:
+  - name: evoguard-enterprise-db
+    plan: free
+    databaseName: evoguard
+    user: evoguard
+
 services:
   - type: web
     name: evoguard-enterprise-backend
@@ -8,14 +14,28 @@ services:
     envVars:
       - key: EVOGUARD_SECRET_KEY
         generateValue: true
+      - key: EVOGUARD_APP_ENV
+        value: production
       - key: EVOGUARD_DATABASE_URL
-        value: sqlite:///evoguard.db
+        fromDatabase:
+          name: evoguard-enterprise-db
+          property: connectionString
       - key: EVOGUARD_CORS_ORIGIN
         value: https://mayedalshehhi.github.io,http://localhost:3000,http://127.0.0.1:3000
+      - key: EVOGUARD_COOKIE_SAMESITE
+        value: None
+      - key: EVOGUARD_COOKIE_SECURE
+        value: true
+      - key: EVOGUARD_MAX_UPLOAD_MB
+        value: 8
+      - key: EVOGUARD_REPORT_DIR
+        value: /tmp/evoguard_reports
       - key: EVOGUARD_DEFAULT_USERNAME
-        value: mayed
+        sync: false
       - key: EVOGUARD_DEFAULT_PASSWORD
-        value: mayed123
+        sync: false
+      - key: EVOGUARD_INGEST_API_KEY
+        generateValue: true
       - key: EVOGUARD_ANALYST_EMAIL
         value: evoguardzu@gmail.com
       - key: EVOGUARD_ENABLE_SCHEDULER

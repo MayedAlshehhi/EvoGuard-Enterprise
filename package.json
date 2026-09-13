@@ -1,5 +1,40 @@
 {
   "name": "evoguard-enterprise-workspace",
   "private": true,
-  "description": "Root workspace metadata only. The React app lives in frontend/."
+  "version": "1.0.0",
+  "description": "EvoGuard Enterprise desktop and workspace launcher.",
+  "main": "desktop/main.js",
+  "scripts": {
+    "frontend:build:desktop": "npm --prefix frontend run build:desktop",
+    "desktop": "npm run frontend:build:desktop && electron .",
+    "desktop:dist": "npm run frontend:build:desktop && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^42.3.2",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.evoguard.enterprise",
+    "productName": "EvoGuard Enterprise",
+    "asar": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "backend/**/*",
+      "ai_engine/**/*",
+      "frontend/build/**/*",
+      "EvoGuard-Enterprise.ico",
+      ".env.example",
+      "requirements.txt",
+      "package.json"
+    ],
+    "win": {
+      "icon": "EvoGuard-Enterprise.ico",
+      "target": [
+        "nsis"
+      ]
+    }
+  }
 }

@@ -34,13 +34,29 @@ import {
   YAxis,
 } from "recharts";
 
-const API_BASE_URL =
-  (process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:5000").replace(
-    /\/$/,
-    ""
-  );
+const DEFAULT_API_BASE_URL =
+  typeof window !== "undefined" &&
+  window.location.hostname.endsWith("github.io")
+    ? "https://evoguard-enterprise-backend.onrender.com"
+    : "http://127.0.0.1:5000";
+
+const API_BASE_URL = (
+  process.env.REACT_APP_API_BASE_URL || DEFAULT_API_BASE_URL
+).replace(/\/$/, "");
 
 const apiUrl = (path) => `${API_BASE_URL}${path}`;
+
+const apiFetch = (path, options = {}) => {
+  const headers = options.body
+    ? { "Content-Type": "application/json", ...(options.headers || {}) }
+    : options.headers;
+
+  return fetch(apiUrl(path), {
+    ...options,
+    credentials: "include",
+    headers,
+  });
+};
 
 const UAE_TARGET = [25.2048, 55.2708];
 
@@ -156,30 +172,40 @@ const liveTestProfiles = {
     label: "DoS / DDoS",
     country: "Russia",
     ip: "203.0.113.77",
+    targetAsset: "Public Web Gateway",
+    destinationPort: "443",
     sourceActivity: "High-volume TCP flood targeting public service",
   },
   probe: {
     label: "Probe / Scan",
     country: "China",
     ip: "198.51.100.23",
+    targetAsset: "Perimeter Firewall",
+    destinationPort: "22",
     sourceActivity: "Repeated port scanning across exposed services",
   },
   r2l: {
     label: "R2L Access",
     country: "Germany",
     ip: "198.51.100.44",
+    targetAsset: "VPN Access Portal",
+    destinationPort: "22",
     sourceActivity: "Repeated suspicious login attempts",
   },
   u2r: {
     label: "U2R Escalation",
     country: "Iran",
     ip: "203.0.113.91",
+    targetAsset: "Admin Workstation",
+    destinationPort: "3389",
     sourceActivity: "Possible privilege escalation sequence",
   },
   normal: {
     label: "Normal Traffic",
     country: "UAE",
     ip: "192.0.2.10",
+    targetAsset: "Internal Application Server",
+    destinationPort: "443",
     sourceActivity: "Normal baseline network traffic",
   },
 };
@@ -217,6 +243,11 @@ const generateIP = () =>
     Math.random() * 255
   )}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
 
+const formatDisplayName = (username) => {
+  const value = String(username || "").trim();
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Mayed";
+};
+
 const formatBytes = (value = 0) => {
   if (!Number.isFinite(value)) return "0 B";
 
@@ -250,6 +281,12 @@ const mergeUniqueById = (existingItems, nextItems, limit = 50) => {
     .slice(0, limit);
 };
 
+const realtimeClassForStatus = (status) => {
+  if (status === "Realtime Connected") return "socket-live";
+  if (status === "Connecting...") return "socket-pending";
+  return "socket-fallback";
+};
+
 const getCurrentChartDay = () => {
   const day = new Date().toLocaleDateString("en-US", { weekday: "short" });
   return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(day) ? day : "Fri";
@@ -262,6 +299,40 @@ function getSourceCoords(country) {
   );
 
   return source?.coords || [52.52, 13.405];
+}
+
+function categoryKeyForIncident(item = {}) {
+  const combined = `${item.attack_category || ""} ${item.attack_label || ""}`.toLowerCase();
+
+  if (combined.includes("normal")) return "normal";
+  if (combined.includes("dos") || combined.includes("ddos") || combined.includes("neptune")) {
+    return "dos";
+  }
+  if (
+    combined.includes("probe") ||
+    combined.includes("scan") ||
+    combined.includes("satan") ||
+    combined.includes("nmap")
+  ) {
+    return "probe";
+  }
+  if (
+    combined.includes("r2l") ||
+    combined.includes("remote") ||
+    combined.includes("credential") ||
+    combined.includes("unauthorized")
+  ) {
+    return "r2l";
+  }
+  if (
+    combined.includes("u2r") ||
+    combined.includes("privilege") ||
+    combined.includes("root")
+  ) {
+    return "u2r";
+  }
+
+  return "normal";
 }
 
 function buildLiveMapEvent(item) {
@@ -287,6 +358,10 @@ function buildLiveMapEvent(item) {
     response_mode: item.response_mode || "Autonomous AI Response",
     response_confidence: item.response_confidence ?? 0,
     source_activity: item.source_activity || "Live backend event",
+    sensor_name: item.sensor_name || "Manual Intake",
+    target_asset: item.target_asset || "UAE Protected Network",
+    network_protocol: item.network_protocol || "tcp",
+    destination_port: item.destination_port,
     event_source: item.event_source || "live",
   };
 }
@@ -385,6 +460,13 @@ const ThreatMap = React.memo(function ThreatMap({
               <br />
               IP: {event.ip}
               <br />
+              Sensor: {event.sensor_name || "Manual Intake"}
+              <br />
+              Asset: {event.target_asset || "UAE Protected Network"}
+              <br />
+              Protocol: {(event.network_protocol || "tcp").toUpperCase()}
+              {event.destination_port ? `/${event.destination_port}` : ""}
+              <br />
               Type: {event.attack_category}
               <br />
               Risk: {event.risk_level}
@@ -406,25 +488,44 @@ const ThreatMap = React.memo(function ThreatMap({
 });
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(
-    localStorage.getItem("evoguard_logged_in") === "true"
-  );
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [currentUser, setCurrentUser] = useState(
     JSON.parse(localStorage.getItem("evoguard_user") || "null")
   );
+  const [userAccounts, setUserAccounts] = useState([]);
+  const [userRoles, setUserRoles] = useState({});
+  const [userManagementStatus, setUserManagementStatus] = useState("");
+  const [userForm, setUserForm] = useState({
+    username: "",
+    password: "",
+    role: "SOC Analyst",
+  });
+  const [passwordResetForm, setPasswordResetForm] = useState({
+    userId: "",
+    password: "",
+  });
   const [activePage, setActivePage] = useState("Dashboard");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [connectionError, setConnectionError] = useState("");
   const [realtimeStatus, setRealtimeStatus] = useState("Polling Fallback");
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [realtimeLastSeen, setRealtimeLastSeen] = useState(null);
+  const [realtimeMeta, setRealtimeMeta] = useState(null);
   const [selectedMapAttackId, setSelectedMapAttackId] = useState("");
   const [liveTestForm, setLiveTestForm] = useState({
     attackType: "dos",
     country: liveTestProfiles.dos.country,
     ip: liveTestProfiles.dos.ip,
+    sensorName: "Edge IDS Sensor",
+    targetAsset: liveTestProfiles.dos.targetAsset,
+    networkProtocol: "tcp",
+    destinationPort: liveTestProfiles.dos.destinationPort,
     sourceActivity: liveTestProfiles.dos.sourceActivity,
   });
   const [liveTestStatus, setLiveTestStatus] = useState("");
@@ -434,8 +535,13 @@ function App() {
   const [deviceStats, setDeviceStats] = useState(null);
   const [attack, setAttack] = useState(null);
   const [history, setHistory] = useState([]);
+  const [historyMeta, setHistoryMeta] = useState(null);
   const [aiResponses, setAiResponses] = useState([]);
+  const [aiPlaybook, setAiPlaybook] = useState(null);
   const [threatIntel, setThreatIntel] = useState(null);
+  const [iocQuery, setIocQuery] = useState("");
+  const [iocLookupResult, setIocLookupResult] = useState(null);
+  const [iocLookupBusy, setIocLookupBusy] = useState(false);
   const [simulationHistory, setSimulationHistory] = useState([]);
   const [weeklyData, setWeeklyData] = useState(initialWeeklyData);
   const [simStats, setSimStats] = useState(initialSimStats);
@@ -443,6 +549,7 @@ function App() {
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatAnswer, setChatAnswer] = useState("");
   const [toast, setToast] = useState(null);
+  const [reportEmailBusy, setReportEmailBusy] = useState("");
   const [socAlert, setSocAlert] = useState(null);
   const [liveMapAttacks, setLiveMapAttacks] = useState([]);
   const [autoSimulation, setAutoSimulation] = useState(false);
@@ -458,7 +565,7 @@ function App() {
   const [socLogs, setSocLogs] = useState([
     "[BOOT] EvoGuard AI defense terminal initialized.",
     "[AI] Model loaded and ready.",
-    "[DB] SQLite threat logging connected.",
+    "[DB] Enterprise event database connected.",
   ]);
 
   const welcomeSpoken = useRef(false);
@@ -655,9 +762,7 @@ const handleSearch = useCallback(async () => {
     .slice(0, 8);
 
   try {
-    const response = await fetch(
-      apiUrl(`/search?q=${encodeURIComponent(query)}`)
-    );
+    const response = await apiFetch(`/search?q=${encodeURIComponent(query)}`);
 
     if (!response.ok) {
       throw new Error("Search request failed");
@@ -698,6 +803,13 @@ const handleSearch = useCallback(async () => {
     [stats]
   );
 
+  const isAdmin = useMemo(
+    () =>
+      currentUser?.role === "Admin" ||
+      currentUser?.access_level === "Administrator",
+    [currentUser]
+  );
+
   const latestIncident = useMemo(
     () => stats?.latest_attack || null,
     [stats]
@@ -719,10 +831,21 @@ const handleSearch = useCallback(async () => {
       executedActions:
         summary?.executed_actions ??
         aiResponses.filter((item) => item.status === "Executed").length,
+      monitoringActions:
+        summary?.monitoring_actions ??
+        aiResponses.filter((item) => item.status === "Monitoring").length,
+      pendingActions: summary?.pending_actions ?? 0,
+      executionRate: summary?.execution_rate ?? 0,
+      automationMode: summary?.automation_mode || "Autonomous AI",
       containmentStatus: summary?.containment_status || "No Events",
       averageConfidence: summary?.average_confidence,
     };
   }, [stats, aiResponses]);
+
+  const activeResponsePlaybook = useMemo(() => {
+    const key = categoryKeyForIncident(latestIncident || attack || {});
+    return aiPlaybook?.playbooks?.[key] || null;
+  }, [aiPlaybook, latestIncident, attack]);
 
   const threatIntelSummary = useMemo(() => {
     const summary = threatIntel?.summary || stats?.threat_intel_summary || {};
@@ -752,7 +875,7 @@ const handleSearch = useCallback(async () => {
   );
 
   const loadHistory = useCallback(() => {
-    fetch(apiUrl("/attack_history?source=live"))
+    apiFetch("/attack_history?source=live&limit=50&page=1&sort=timestamp_desc")
       .then((res) => res.json())
       .then((data) => {
         const rows = Array.isArray(data)
@@ -760,15 +883,17 @@ const handleSearch = useCallback(async () => {
           : data.history || data.results || data.data || [];
 
         setHistory(rows);
+        setHistoryMeta(data.pagination || null);
       })
       .catch(() => {
         setHistory([]);
+        setHistoryMeta(null);
         setConnectionError("Backend connection issue: live attack history is unavailable.");
       });
   }, []);
 
   const loadStats = useCallback(() => {
-    fetch(apiUrl("/dashboard_stats?source=live"))
+    apiFetch("/dashboard_stats?source=live")
       .then((res) => res.json())
       .then((data) => {
         setStats(data);
@@ -781,7 +906,7 @@ const handleSearch = useCallback(async () => {
   }, []);
 
   const loadAIResponses = useCallback(() => {
-    fetch(apiUrl("/ai_responses?source=live&limit=24"))
+    apiFetch("/ai_responses?source=live&limit=24")
       .then((res) => res.json())
       .then((data) => {
         setAiResponses(Array.isArray(data.responses) ? data.responses : []);
@@ -792,8 +917,17 @@ const handleSearch = useCallback(async () => {
       });
   }, []);
 
+  const loadAIPlaybook = useCallback(() => {
+    apiFetch("/ai_response_playbook")
+      .then((res) => res.json())
+      .then((data) => setAiPlaybook(data))
+      .catch(() => {
+        setAiPlaybook(null);
+      });
+  }, []);
+
   const loadThreatIntel = useCallback(() => {
-    fetch(apiUrl("/threat_intel?source=live"))
+    apiFetch("/threat_intel?source=live")
       .then((res) => res.json())
       .then((data) => setThreatIntel(data))
       .catch(() => {
@@ -803,7 +937,7 @@ const handleSearch = useCallback(async () => {
   }, []);
 
   const loadDeviceStats = useCallback(() => {
-    fetch(apiUrl("/device_stats"))
+    apiFetch("/device_stats")
       .then((res) => res.json())
       .then((data) => setDeviceStats(data))
       .catch(() => {
@@ -812,6 +946,168 @@ const handleSearch = useCallback(async () => {
       });
   }, []);
 
+  const loadUserAccounts = useCallback(() => {
+    if (!isAdmin) {
+      setUserAccounts([]);
+      setUserRoles({});
+      return;
+    }
+
+    apiFetch("/users")
+      .then((res) => res.json())
+      .then((data) => {
+        setUserAccounts(Array.isArray(data.users) ? data.users : []);
+        setUserRoles(data.roles || {});
+      })
+      .catch(() => {
+        setUserAccounts([]);
+        setUserRoles({});
+        setUserManagementStatus("User management is unavailable. Check backend connection.");
+      });
+  }, [isAdmin]);
+
+  const createOperatorAccount = useCallback(
+    async (event) => {
+      event.preventDefault();
+      setUserManagementStatus("Creating account...");
+
+      try {
+        const response = await apiFetch("/users", {
+          method: "POST",
+          body: JSON.stringify(userForm),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || "Could not create account.");
+        }
+
+        setUserManagementStatus(`Account created for ${data.user.username}.`);
+        setUserForm({ username: "", password: "", role: "SOC Analyst" });
+        loadUserAccounts();
+      } catch (error) {
+        setUserManagementStatus(error.message || "Could not create account.");
+      }
+    },
+    [loadUserAccounts, userForm]
+  );
+
+  const updateOperatorRole = useCallback(
+    async (userId, role) => {
+      setUserManagementStatus("Updating role...");
+
+      try {
+        const response = await apiFetch(`/users/${userId}/role`, {
+          method: "PATCH",
+          body: JSON.stringify({ role }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || "Could not update role.");
+        }
+
+        setUserManagementStatus(`Role updated for ${data.user.username}.`);
+        loadUserAccounts();
+      } catch (error) {
+        setUserManagementStatus(error.message || "Could not update role.");
+      }
+    },
+    [loadUserAccounts]
+  );
+
+  const updateOperatorStatus = useCallback(
+    async (userId, isActive) => {
+      setUserManagementStatus(isActive ? "Enabling account..." : "Disabling account...");
+
+      try {
+        const response = await apiFetch(`/users/${userId}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_active: isActive }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || "Could not update account status.");
+        }
+
+        setUserManagementStatus(
+          `${data.user.username} is now ${data.user.is_active ? "active" : "disabled"}.`
+        );
+        loadUserAccounts();
+      } catch (error) {
+        setUserManagementStatus(error.message || "Could not update account status.");
+      }
+    },
+    [loadUserAccounts]
+  );
+
+  const resetOperatorPassword = useCallback(
+    async (event) => {
+      event.preventDefault();
+
+      if (!passwordResetForm.userId) {
+        setUserManagementStatus("Select an account before resetting a password.");
+        return;
+      }
+
+      setUserManagementStatus("Resetting password...");
+
+      try {
+        const response = await apiFetch(`/users/${passwordResetForm.userId}/password`, {
+          method: "PATCH",
+          body: JSON.stringify({ password: passwordResetForm.password }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || "Could not reset password.");
+        }
+
+        setUserManagementStatus(`Password reset for ${data.user.username}.`);
+        setPasswordResetForm({ userId: "", password: "" });
+        loadUserAccounts();
+      } catch (error) {
+        setUserManagementStatus(error.message || "Could not reset password.");
+      }
+    },
+    [loadUserAccounts, passwordResetForm]
+  );
+
+  const deleteOperatorAccount = useCallback(
+    async (userId, username) => {
+      const confirmed = window.confirm(
+        `Delete ${username}? This removes the account from the backend database.`
+      );
+
+      if (!confirmed) return;
+
+      setUserManagementStatus(`Deleting ${username}...`);
+
+      try {
+        const response = await apiFetch(`/users/${userId}`, {
+          method: "DELETE",
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || "Could not delete account.");
+        }
+
+        setUserManagementStatus(`Account deleted: ${data.deleted_username}.`);
+        setPasswordResetForm((prev) =>
+          String(prev.userId) === String(userId)
+            ? { userId: "", password: "" }
+            : prev
+        );
+        loadUserAccounts();
+      } catch (error) {
+        setUserManagementStatus(error.message || "Could not delete account.");
+      }
+    },
+    [loadUserAccounts]
+  );
+
   const handleLiveTestTypeChange = useCallback((attackType) => {
     const profile = liveTestProfiles[attackType] || liveTestProfiles.dos;
 
@@ -819,6 +1115,10 @@ const handleSearch = useCallback(async () => {
       attackType,
       country: profile.country,
       ip: profile.ip,
+      sensorName: "Edge IDS Sensor",
+      targetAsset: profile.targetAsset,
+      networkProtocol: "tcp",
+      destinationPort: profile.destinationPort,
       sourceActivity: profile.sourceActivity,
     });
     setLiveTestStatus("");
@@ -832,13 +1132,16 @@ const handleSearch = useCallback(async () => {
       attack_type: liveTestForm.attackType,
       country: liveTestForm.country,
       ip: liveTestForm.ip,
+      sensor_name: liveTestForm.sensorName,
+      target_asset: liveTestForm.targetAsset,
+      network_protocol: liveTestForm.networkProtocol,
+      destination_port: liveTestForm.destinationPort,
       source_activity: liveTestForm.sourceActivity,
     };
 
     try {
-      const response = await fetch(apiUrl("/ingest_event"), {
+      const response = await apiFetch("/ingest_event", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
@@ -872,8 +1175,8 @@ const handleSearch = useCallback(async () => {
     setLiveTestStatus("Clearing live dashboard events...");
 
     try {
-      const response = await fetch(
-        apiUrl("/reset_attack_history?source=live&confirm=RESET"),
+      const response = await apiFetch(
+        "/reset_attack_history?source=live&confirm=RESET",
         { method: "POST" }
       );
 
@@ -978,7 +1281,7 @@ const handleSearch = useCallback(async () => {
 
   const simulateAttack = useCallback(
     (type) => {
-      fetch(apiUrl(`/simulate_attack/${type}`))
+      apiFetch(`/simulate_attack/${type}`, { method: "POST" })
         .then((res) => (res.ok ? res.json() : null))
         .catch(() => {
           setToast("Backend unavailable. Running local simulation fallback.");
@@ -1014,12 +1317,12 @@ const handleSearch = useCallback(async () => {
   }, []);
   const handleLogin = async (e) => {
     e.preventDefault();
+    setLoginBusy(true);
+    setLoginError("");
 
     try {
-      const response = await fetch(apiUrl("/auth/login"), {
+      const response = await apiFetch("/auth/login", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(loginForm),
       });
 
@@ -1029,39 +1332,28 @@ const handleSearch = useCallback(async () => {
         throw new Error(data.message || "Invalid username or password.");
       }
 
-      localStorage.setItem("evoguard_logged_in", "true");
       localStorage.setItem("evoguard_user", JSON.stringify(data.user));
       setCurrentUser(data.user);
       setIsLoggedIn(true);
       setLoginError("");
-      return;
     } catch (error) {
-      if (loginForm.username === "mayed" && loginForm.password === "mayed123") {
-        const fallbackUser = {
-          username: "mayed",
-          role: "AI Defense Operator",
-          access_level: "Administrator",
-        };
-
-        localStorage.setItem("evoguard_logged_in", "true");
-        localStorage.setItem("evoguard_user", JSON.stringify(fallbackUser));
-        setCurrentUser(fallbackUser);
-        setIsLoggedIn(true);
-        setLoginError("");
-        return;
-      }
-
-      setLoginError(error.message || "Invalid username or password.");
+      localStorage.removeItem("evoguard_user");
+      setCurrentUser(null);
+      setIsLoggedIn(false);
+      setLoginError(
+        error.message ||
+          "Login failed. Make sure the backend is running, then try again."
+      );
+    } finally {
+      setLoginBusy(false);
     }
   };
 
   const handleLogout = () => {
-    fetch(apiUrl("/auth/logout"), {
+    apiFetch("/auth/logout", {
       method: "POST",
-      credentials: "include",
     }).catch(() => {});
 
-    localStorage.removeItem("evoguard_logged_in");
     localStorage.removeItem("evoguard_user");
     window.speechSynthesis?.cancel();
     setIsLoggedIn(false);
@@ -1075,25 +1367,32 @@ const handleSearch = useCallback(async () => {
   };
 
   useEffect(() => {
-    if (!isLoggedIn) return;
-
-    fetch(apiUrl("/auth/session"), {
-      credentials: "include",
-    })
+    apiFetch("/auth/session")
       .then((res) => res.json())
       .then((data) => {
         if (data.authenticated && data.user) {
           localStorage.setItem("evoguard_user", JSON.stringify(data.user));
           setCurrentUser(data.user);
+          setIsLoggedIn(true);
+          return;
         }
+
+        localStorage.removeItem("evoguard_user");
+        setCurrentUser(null);
+        setIsLoggedIn(false);
       })
-      .catch(() => {});
-  }, [isLoggedIn]);
+      .catch(() => {
+        localStorage.removeItem("evoguard_user");
+        setCurrentUser(null);
+        setIsLoggedIn(false);
+      })
+      .finally(() => setAuthChecked(true));
+  }, []);
 
   const askAssistant = () => {
     if (!chatQuestion.trim()) return;
 
-    fetch(apiUrl(`/ai_assistant/${encodeURIComponent(chatQuestion)}`))
+    apiFetch(`/ai_assistant/${encodeURIComponent(chatQuestion)}`)
       .then((res) => res.json())
       .then((data) => setChatAnswer(data.answer))
       .catch(() => {
@@ -1104,12 +1403,83 @@ const handleSearch = useCallback(async () => {
       });
   };
 
+  const sendEmailReport = useCallback(async (path, label) => {
+    setReportEmailBusy(label);
+    setToast(`Sending ${label.toLowerCase()} report...`);
+
+    try {
+      const response = await apiFetch(path, { method: "POST" });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || `${label} report could not be sent.`);
+      }
+
+      setToast(data.message || `${label} report sent successfully.`);
+    } catch (error) {
+      setToast(error.message || `${label} report could not be sent.`);
+    } finally {
+      setReportEmailBusy("");
+      window.setTimeout(() => setToast(null), 5200);
+    }
+  }, []);
+
+  const lookupIndicator = async () => {
+    const query = iocQuery.trim();
+
+    if (!query) return;
+
+    setIocLookupBusy(true);
+    setIocLookupResult(null);
+
+    try {
+      const response = await apiFetch(`/ioc_lookup/${encodeURIComponent(query)}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "IOC lookup failed.");
+      }
+
+      setIocLookupResult(data);
+    } catch (error) {
+      setIocLookupResult({
+        indicator: query,
+        verdict: "Lookup Error",
+        match_count: 0,
+        event_count: 0,
+        matches: [],
+        related_events: [],
+        recommendation: error.message || "Backend lookup is unavailable.",
+      });
+    } finally {
+      setIocLookupBusy(false);
+    }
+  };
+
+  const applyRealtimeSync = useCallback((payload = {}) => {
+    if (payload?.source !== "live") return;
+
+    if (payload.stats) setStats(payload.stats);
+    if (Array.isArray(payload.history)) {
+      setHistory(payload.history);
+      setHistoryMeta((prev) => ({
+        ...(prev || {}),
+        total: payload.stats?.total_threats ?? payload.history.length,
+      }));
+    }
+    if (Array.isArray(payload.responses)) setAiResponses(payload.responses);
+    if (payload.threat_intel) setThreatIntel(payload.threat_intel);
+    if (payload.realtime_status) setRealtimeMeta(payload.realtime_status);
+    if (payload.server_time) setRealtimeLastSeen(payload.server_time);
+  }, []);
+
   useEffect(() => {
     if (!isLoggedIn) return;
 
     loadStats();
     loadHistory();
     loadAIResponses();
+    loadAIPlaybook();
     loadThreatIntel();
     loadDeviceStats();
 
@@ -1121,29 +1491,41 @@ const handleSearch = useCallback(async () => {
     }
 
     const interval = setInterval(() => {
-      loadStats();
-      loadHistory();
-      loadAIResponses();
-      loadThreatIntel();
+      if (!realtimeConnected) {
+        loadStats();
+        loadHistory();
+        loadAIResponses();
+        loadThreatIntel();
+      }
+
       loadDeviceStats();
-    }, 5000);
+    }, realtimeConnected ? 30000 : 5000);
 
     return () => clearInterval(interval);
   }, [
     isLoggedIn,
+    realtimeConnected,
     loadStats,
     loadHistory,
     loadAIResponses,
+    loadAIPlaybook,
     loadThreatIntel,
     loadDeviceStats,
     speak,
   ]);
 
   useEffect(() => {
+    if (!isLoggedIn || activePage !== "Settings") return;
+
+    loadUserAccounts();
+  }, [activePage, isLoggedIn, loadUserAccounts]);
+
+  useEffect(() => {
     if (!isLoggedIn) return undefined;
 
     const socket = io(API_BASE_URL, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1200,
@@ -1151,27 +1533,38 @@ const handleSearch = useCallback(async () => {
 
     socketRef.current = socket;
     setRealtimeStatus("Connecting...");
+    setRealtimeConnected(false);
 
     socket.on("connect", () => {
       setRealtimeStatus("Realtime Connected");
+      setRealtimeConnected(true);
+      setRealtimeLastSeen(new Date().toISOString());
       setConnectionError("");
       socket.emit("evoguard:request_sync", { source: "live" });
     });
 
     socket.on("disconnect", () => {
       setRealtimeStatus("Polling Fallback");
+      setRealtimeConnected(false);
     });
 
     socket.on("connect_error", () => {
       setRealtimeStatus("Polling Fallback");
+      setRealtimeConnected(false);
     });
 
     socket.on("evoguard:connected", (payload) => {
-      if (payload?.source !== "live") return;
-      if (payload.stats) setStats(payload.stats);
-      if (Array.isArray(payload.history)) setHistory(payload.history);
-      if (Array.isArray(payload.responses)) setAiResponses(payload.responses);
-      loadThreatIntel();
+      applyRealtimeSync(payload);
+      setRealtimeStatus("Realtime Connected");
+      setRealtimeConnected(true);
+    });
+
+    socket.on("evoguard:heartbeat", (payload) => {
+      if (payload?.source && payload.source !== "live") return;
+      setRealtimeStatus("Realtime Connected");
+      setRealtimeConnected(true);
+      setRealtimeMeta(payload || null);
+      setRealtimeLastSeen(payload?.server_time || new Date().toISOString());
     });
 
     socket.on("evoguard:new_attack", (payload) => {
@@ -1181,9 +1574,22 @@ const handleSearch = useCallback(async () => {
       const now = new Date().toLocaleTimeString();
 
       setHistory((prev) => prependUniqueById(prev, event, 50));
+      setHistoryMeta((prev) => ({
+        ...(prev || {}),
+        total: payload.stats?.total_threats ?? (prev?.total || 0) + 1,
+      }));
       if (payload.stats) setStats(payload.stats);
+      if (payload.threat_intel) setThreatIntel(payload.threat_intel);
       setSelectedMapAttackId(`LIVE-${event.id}`);
       setToast(`Realtime event received: ${event.attack_category}`);
+      setRealtimeLastSeen(payload.server_time || new Date().toISOString());
+      setSocLogs((prev) =>
+        [
+          `[REALTIME] ${event.attack_category} received from ${event.country} (${event.ip}).`,
+          `[AI] ${event.risk_level} risk scored at ${event.risk_score}/100.`,
+          ...prev,
+        ].slice(0, 14)
+      );
       setLiveThreats((prev) =>
         [
           `[${now}] ${event.risk_level} ${event.attack_category} from ${event.country} (${event.ip})`,
@@ -1196,7 +1602,6 @@ const handleSearch = useCallback(async () => {
           12
         )
       );
-      loadThreatIntel();
       window.setTimeout(() => setToast(null), 4200);
     });
 
@@ -1204,17 +1609,70 @@ const handleSearch = useCallback(async () => {
       if (payload?.source !== "live") return;
       const responses = Array.isArray(payload.responses) ? payload.responses : [];
       setAiResponses((prev) => mergeUniqueById(prev, responses, 24));
+      setRealtimeLastSeen(payload.server_time || new Date().toISOString());
+      setSocLogs((prev) =>
+        [
+          `[RESPONSE] ${responses.length} autonomous AI action(s) synchronized.`,
+          ...prev,
+        ].slice(0, 14)
+      );
     });
 
     socket.on("evoguard:stats_updated", (payload) => {
       if (payload?.source === "live") setStats(payload);
     });
 
+    socket.on("evoguard:threat_intel_updated", (payload) => {
+      if (payload?.source !== "live") return;
+      if (payload.threat_intel) setThreatIntel(payload.threat_intel);
+      setRealtimeLastSeen(payload.server_time || new Date().toISOString());
+    });
+
+    socket.on("evoguard:audit_event", (payload) => {
+      const now = new Date().toLocaleTimeString();
+      setActivityFeed((prev) =>
+        [
+          `[${now}] Audit event: ${payload?.action || "system activity"} by ${payload?.actor_username || "system"}.`,
+          ...prev,
+        ].slice(0, 12)
+      );
+    });
+
+    socket.on("evoguard:report_event", (payload) => {
+      const now = new Date().toLocaleTimeString();
+      setActivityFeed((prev) =>
+        [
+          `[${now}] Report ${payload?.report_type || "security"} ${payload?.delivery_status || "updated"}.`,
+          ...prev,
+        ].slice(0, 12)
+      );
+    });
+
+    socket.on("evoguard:history_reset", (payload) => {
+      if (payload?.source === "live" || payload?.source === "all") {
+        setHistory([]);
+        setAiResponses([]);
+        if (payload.stats) setStats(payload.stats);
+        setThreatIntel(null);
+        setSelectedMapAttackId("");
+        setToast("Live dashboard history cleared.");
+        window.setTimeout(() => setToast(null), 3600);
+      }
+    });
+
+    const heartbeatInterval = window.setInterval(() => {
+      if (socket.connected) {
+        socket.emit("evoguard:ping", { source: "live" });
+      }
+    }, 15000);
+
     return () => {
+      window.clearInterval(heartbeatInterval);
       socket.disconnect();
       socketRef.current = null;
+      setRealtimeConnected(false);
     };
-  }, [isLoggedIn, loadThreatIntel]);
+  }, [isLoggedIn, applyRealtimeSync]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -1269,6 +1727,19 @@ const handleSearch = useCallback(async () => {
     return () => clearInterval(interval);
   }, [isLoggedIn, autoSimulation, simulateAttack]);
 
+  if (!authChecked) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <img src={logoIcon} alt="EvoGuard" className="login-logo-img" />
+          <h1>EvoGuard</h1>
+          <p>Checking secure operator session...</p>
+          <span className="login-hint">Backend authentication required</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return (
       <div className="login-page">
@@ -1298,7 +1769,9 @@ const handleSearch = useCallback(async () => {
 
             {loginError && <div className="login-error">{loginError}</div>}
 
-            <button type="submit">Login</button>
+            <button type="submit" disabled={loginBusy}>
+              {loginBusy ? "Authenticating..." : "Login"}
+            </button>
           </form>
 
           <span className="login-hint">Authorized AI defense access only</span>
@@ -1339,7 +1812,7 @@ const handleSearch = useCallback(async () => {
 
           <div className="system-box">
             <p>Logged in as</p>
-            <h3>{currentUser?.username || "mayed"}</h3>
+            <h3>{formatDisplayName(currentUser?.username)}</h3>
             <button className="logout-btn" onClick={handleLogout}>
               Logout
             </button>
@@ -1376,11 +1849,14 @@ const handleSearch = useCallback(async () => {
             </div>
 
             <div
-              className={`header-right ${
-                realtimeStatus === "Realtime Connected"
-                  ? "socket-live"
-                  : "socket-fallback"
-              }`}
+              className={`header-right ${realtimeClassForStatus(realtimeStatus)}`}
+              title={
+                realtimeLastSeen
+                  ? `Realtime last seen: ${realtimeLastSeen} | Transport: ${
+                      realtimeMeta?.transport || "polling"
+                    } | Connected clients: ${realtimeMeta?.connected_clients ?? 0}`
+                  : "Realtime status"
+              }
             >
               <span className="dot"></span>
               <span>{realtimeStatus}</span>
@@ -1590,17 +2066,25 @@ const handleSearch = useCallback(async () => {
                 <div className="panel">
                   <div className="panel-title">
                     <h3>AI Response Execution Center</h3>
-                    <span>Autonomous containment</span>
+                    <span>{activeResponsePlaybook?.name || "Autonomous containment"}</span>
                   </div>
 
                   <div className="response-metrics-row">
+                    <div>
+                      <strong>{aiResponseMetrics.totalActions}</strong>
+                      <span>Total Actions</span>
+                    </div>
                     <div>
                       <strong>{aiResponseMetrics.executedActions}</strong>
                       <span>Executed</span>
                     </div>
                     <div>
-                      <strong>{aiResponseMetrics.containmentStatus}</strong>
-                      <span>Status</span>
+                      <strong>{aiResponseMetrics.monitoringActions}</strong>
+                      <span>Monitoring</span>
+                    </div>
+                    <div>
+                      <strong>{Math.round(aiResponseMetrics.executionRate)}%</strong>
+                      <span>Execution Rate</span>
                     </div>
                     <div>
                       <strong>
@@ -1612,6 +2096,14 @@ const handleSearch = useCallback(async () => {
                     </div>
                   </div>
 
+                  {activeResponsePlaybook && (
+                    <div className="response-playbook-card">
+                      <strong>{aiResponseMetrics.automationMode}</strong>
+                      <p>{activeResponsePlaybook.objective}</p>
+                      <span>{activeResponsePlaybook.automation_level}</span>
+                    </div>
+                  )}
+
                   {aiResponses.length ? (
                     <div className="ai-response-timeline">
                       {aiResponses.slice(0, 5).map((item) => (
@@ -1620,8 +2112,10 @@ const handleSearch = useCallback(async () => {
                           <div>
                             <strong>{item.action_name}</strong>
                             <p>{item.explanation}</p>
+                            {item.response_outcome && <p>{item.response_outcome}</p>}
                             <span>
-                              {item.execution_stage} | {item.status} |{" "}
+                              {item.playbook_name || "AI playbook"} | {item.action_type} |{" "}
+                              {item.execution_stage} | {item.response_decision || item.status} |{" "}
                               {Math.round(item.confidence || 0)}%
                             </span>
                           </div>
@@ -1678,14 +2172,21 @@ const handleSearch = useCallback(async () => {
                 <div className="panel history-panel">
                   <div className="panel-title">
                     <h3>Recent Attack History</h3>
-                    <span>Database events</span>
+                    <span>
+                      {historyMeta?.total ?? history.length} database events
+                    </span>
                   </div>
                   <table className="history-table">
                     <thead>
                       <tr>
-                        <th>ID</th>
+                        <th>Event ID</th>
+                        <th>Source</th>
                         <th>Attack</th>
                         <th>Category</th>
+                        <th>Country</th>
+                        <th>IP</th>
+                        <th>Sensor</th>
+                        <th>Asset</th>
                         <th>Risk</th>
                         <th>Level</th>
                         <th>Timestamp</th>
@@ -1694,9 +2195,14 @@ const handleSearch = useCallback(async () => {
                     <tbody>
                       {history.slice(0, 8).map((item) => (
                         <tr key={item.id}>
-                          <td>{item.id}</td>
+                          <td>{item.event_uuid || item.id}</td>
+                          <td>{item.event_source || "live"}</td>
                           <td>{item.attack_label}</td>
                           <td>{item.attack_category}</td>
+                          <td>{item.country || item.source_country || "External"}</td>
+                          <td>{item.ip || item.source_ip || "Unknown"}</td>
+                          <td>{item.sensor_name || "Manual Intake"}</td>
+                          <td>{item.target_asset || "Protected Network"}</td>
                           <td>{item.risk_score}/100</td>
                           <td>{item.risk_level}</td>
                           <td>{item.timestamp}</td>
@@ -1776,6 +2282,94 @@ const handleSearch = useCallback(async () => {
                     ))}
                   </div>
                 </div>
+              </div>
+
+              <div className="panel ioc-lookup-panel">
+                <div className="panel-title">
+                  <h3>IOC Lookup Console</h3>
+                  <span>IP, country, category, reputation, MITRE</span>
+                </div>
+                <div className="ioc-lookup-form">
+                  <input
+                    type="text"
+                    placeholder="Search: 203.0.113.77, Russia, DDoS, T1498, malicious..."
+                    value={iocQuery}
+                    onChange={(event) => setIocQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") lookupIndicator();
+                    }}
+                  />
+                  <button onClick={lookupIndicator} disabled={iocLookupBusy}>
+                    {iocLookupBusy ? "Searching..." : "Lookup IOC"}
+                  </button>
+                </div>
+
+                {iocLookupResult && (
+                  <div className="ioc-lookup-result">
+                    <div className="ioc-lookup-verdict">
+                      <strong>{iocLookupResult.indicator}</strong>
+                      <span
+                        className={`intel-chip ${String(iocLookupResult.verdict)
+                          .toLowerCase()
+                          .replace(/\s+/g, "-")}`}
+                      >
+                        {iocLookupResult.verdict}
+                      </span>
+                    </div>
+                    <p>{iocLookupResult.recommendation}</p>
+                    <div className="ioc-lookup-metrics">
+                      <div>
+                        <strong>{iocLookupResult.match_count}</strong>
+                        <span>IOC Matches</span>
+                      </div>
+                      <div>
+                        <strong>{iocLookupResult.event_count}</strong>
+                        <span>Related Events</span>
+                      </div>
+                    </div>
+
+                    <div className="ioc-lookup-grid">
+                      <div>
+                        <h4>Matched Indicators</h4>
+                        {(iocLookupResult.matches || []).length ? (
+                          iocLookupResult.matches.slice(0, 4).map((ioc) => (
+                            <div
+                              className="ioc-mini-row"
+                              key={`${ioc.indicator_type}-${ioc.indicator_value}-${ioc.id}`}
+                            >
+                              <strong>{ioc.indicator_value}</strong>
+                              <span>{ioc.reputation} | {ioc.attack_category}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="ioc-mini-row">
+                            <strong>No direct IOC match</strong>
+                            <span>Search result based on observed events only</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <h4>Related Events</h4>
+                        {(iocLookupResult.related_events || []).length ? (
+                          iocLookupResult.related_events.slice(0, 4).map((event) => (
+                            <div className="ioc-mini-row" key={event.id}>
+                              <strong>{event.attack_category}</strong>
+                              <span>
+                                {event.risk_level} | {event.country || event.source_country || "External"}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="ioc-mini-row">
+                            <strong>No related events</strong>
+                            <span>Send a live event to build history</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="intel-grid-two">
@@ -1928,6 +2522,69 @@ const handleSearch = useCallback(async () => {
                         setLiveTestForm((prev) => ({
                           ...prev,
                           ip: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Sensor
+                    <input
+                      type="text"
+                      value={liveTestForm.sensorName}
+                      onChange={(event) =>
+                        setLiveTestForm((prev) => ({
+                          ...prev,
+                          sensorName: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Target Asset
+                    <input
+                      type="text"
+                      value={liveTestForm.targetAsset}
+                      onChange={(event) =>
+                        setLiveTestForm((prev) => ({
+                          ...prev,
+                          targetAsset: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Protocol
+                    <select
+                      value={liveTestForm.networkProtocol}
+                      onChange={(event) =>
+                        setLiveTestForm((prev) => ({
+                          ...prev,
+                          networkProtocol: event.target.value,
+                        }))
+                      }
+                    >
+                      {["tcp", "udp", "icmp", "http", "https", "dns"].map((protocol) => (
+                        <option key={protocol} value={protocol}>
+                          {protocol.toUpperCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Destination Port
+                    <input
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={liveTestForm.destinationPort}
+                      onChange={(event) =>
+                        setLiveTestForm((prev) => ({
+                          ...prev,
+                          destinationPort: event.target.value,
                         }))
                       }
                     />
@@ -2369,22 +3026,31 @@ const handleSearch = useCallback(async () => {
                 <div className="report-card">
                   <h3>Weekly Report</h3>
                   <p>Email weekly AI defense summary to the configured operator email.</p>
-                  <button onClick={() => window.open(apiUrl("/send_weekly_report"))}>
-                    Send Weekly
+                  <button
+                    onClick={() => sendEmailReport("/send_weekly_report", "Weekly")}
+                    disabled={reportEmailBusy === "Weekly"}
+                  >
+                    {reportEmailBusy === "Weekly" ? "Sending..." : "Send Weekly"}
                   </button>
                 </div>
                 <div className="report-card">
                   <h3>Monthly Report</h3>
                   <p>Email end-of-month threat analysis and attack summary.</p>
-                  <button onClick={() => window.open(apiUrl("/send_monthly_report"))}>
-                    Send Monthly
+                  <button
+                    onClick={() => sendEmailReport("/send_monthly_report", "Monthly")}
+                    disabled={reportEmailBusy === "Monthly"}
+                  >
+                    {reportEmailBusy === "Monthly" ? "Sending..." : "Send Monthly"}
                   </button>
                 </div>
                 <div className="report-card">
                   <h3>Yearly Report</h3>
                   <p>Email annual EvoGuard security performance summary.</p>
-                  <button onClick={() => window.open(apiUrl("/send_yearly_report"))}>
-                    Send Yearly
+                  <button
+                    onClick={() => sendEmailReport("/send_yearly_report", "Yearly")}
+                    disabled={reportEmailBusy === "Yearly"}
+                  >
+                    {reportEmailBusy === "Yearly" ? "Sending..." : "Send Yearly"}
                   </button>
                 </div>
               </div>
@@ -2447,8 +3113,8 @@ const handleSearch = useCallback(async () => {
                     <span>Current user</span>
                   </div>
                   <div className="settings-list">
-                    <div><strong>Username</strong><span>{currentUser?.username || "mayed"}</span></div>
-                    <div><strong>Role</strong><span>{currentUser?.role || "AI Defense Operator"}</span></div>
+                    <div><strong>Username</strong><span>{formatDisplayName(currentUser?.username)}</span></div>
+                    <div><strong>Role</strong><span>{currentUser?.role || "Operator"}</span></div>
                     <div><strong>Access Level</strong><span>{currentUser?.access_level || "Administrator"}</span></div>
                   </div>
                   <button className="settings-danger-btn" onClick={handleLogout}>
@@ -2481,6 +3147,175 @@ const handleSearch = useCallback(async () => {
                     <div><strong>Email Reports</strong><span>Configured</span></div>
                   </div>
                 </div>
+              </div>
+
+              <div className="panel user-management-panel">
+                <div className="panel-title">
+                  <h3>Operator Access Management</h3>
+                  <span>{isAdmin ? "Admin only" : "Restricted"}</span>
+                </div>
+
+                {isAdmin ? (
+                  <>
+                    <div className="user-management-layout">
+                      <form className="user-management-form" onSubmit={createOperatorAccount}>
+                        <label>
+                          Username
+                          <input
+                            type="text"
+                            placeholder="Instructor or operator username"
+                            value={userForm.username}
+                            onChange={(e) =>
+                              setUserForm({ ...userForm, username: e.target.value })
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          Temporary Password
+                          <input
+                            type="password"
+                            placeholder="Minimum 8 characters"
+                            value={userForm.password}
+                            onChange={(e) =>
+                              setUserForm({ ...userForm, password: e.target.value })
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          Role
+                          <select
+                            value={userForm.role}
+                            onChange={(e) =>
+                              setUserForm({ ...userForm, role: e.target.value })
+                            }
+                          >
+                            {(Object.keys(userRoles).length
+                              ? Object.keys(userRoles)
+                              : ["Admin", "SOC Analyst", "Viewer"]
+                            ).map((role) => (
+                              <option key={role} value={role}>
+                                {role}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <button type="submit">Create Account</button>
+                      </form>
+
+                      <form className="user-management-form" onSubmit={resetOperatorPassword}>
+                        <label>
+                          Reset Password For
+                          <select
+                            value={passwordResetForm.userId}
+                            onChange={(e) =>
+                              setPasswordResetForm({
+                                ...passwordResetForm,
+                                userId: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">Select account</option>
+                            {userAccounts.map((user) => (
+                              <option key={user.id} value={user.id}>
+                                {user.username}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label>
+                          New Temporary Password
+                          <input
+                            type="password"
+                            placeholder="Minimum 8 characters"
+                            value={passwordResetForm.password}
+                            onChange={(e) =>
+                              setPasswordResetForm({
+                                ...passwordResetForm,
+                                password: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+
+                        <button type="submit">Reset Password</button>
+                      </form>
+                    </div>
+
+                    {userManagementStatus && (
+                      <div className="user-management-status">
+                        {userManagementStatus}
+                      </div>
+                    )}
+
+                    <div className="user-table">
+                      <div className="user-table-row user-table-head">
+                        <span>Operator</span>
+                        <span>Role</span>
+                        <span>Status</span>
+                        <span>Last Login</span>
+                        <span>Actions</span>
+                      </div>
+
+                      {userAccounts.map((user) => (
+                        <div className="user-table-row" key={user.id}>
+                          <span>
+                            <strong>{user.username}</strong>
+                            <small>{user.access_level}</small>
+                          </span>
+
+                          <span>
+                            <select
+                              value={user.role}
+                              onChange={(e) => updateOperatorRole(user.id, e.target.value)}
+                            >
+                              {(Object.keys(userRoles).length
+                                ? Object.keys(userRoles)
+                                : ["Admin", "SOC Analyst", "Viewer"]
+                              ).map((role) => (
+                                <option key={role} value={role}>
+                                  {role}
+                                </option>
+                              ))}
+                            </select>
+                          </span>
+
+                          <span className={user.is_active ? "online-text" : "disabled-text"}>
+                            {user.is_active ? "Active" : "Disabled"}
+                          </span>
+
+                          <span>{user.last_login || "Never"}</span>
+
+                          <span className="user-table-actions">
+                            <button
+                              className="secondary-action"
+                              onClick={() => updateOperatorStatus(user.id, !user.is_active)}
+                            >
+                              {user.is_active ? "Disable" : "Enable"}
+                            </button>
+                            <button
+                              className="delete-action"
+                              onClick={() => deleteOperatorAccount(user.id, user.username)}
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <p className="privacy-note">
+                      Passwords are accepted once, hashed by the backend, and never displayed in the dashboard.
+                    </p>
+                  </>
+                ) : (
+                  <div className="empty-box">
+                    Only Admin accounts can create or manage EvoGuard operators.
+                  </div>
+                )}
               </div>
 
               <div className="settings-grid-two">
@@ -2576,6 +3411,3 @@ const handleSearch = useCallback(async () => {
 }
 
 export default App;
-
-
-

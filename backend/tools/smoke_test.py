@@ -1,8 +1,12 @@
 import json
+import os
+import http.cookiejar
 import urllib.request
 
 
 BASE_URL = "http://127.0.0.1:5000"
+COOKIE_JAR = http.cookiejar.CookieJar()
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(COOKIE_JAR))
 
 
 def request_json(path, method="GET", payload=None):
@@ -14,11 +18,30 @@ def request_json(path, method="GET", payload=None):
         method=method,
     )
 
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with OPENER.open(request, timeout=20) as response:
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
 def main():
+    username = os.getenv("EVOGUARD_SMOKE_USERNAME") or os.getenv("EVOGUARD_DEFAULT_USERNAME")
+    password = os.getenv("EVOGUARD_SMOKE_PASSWORD") or os.getenv("EVOGUARD_DEFAULT_PASSWORD")
+
+    if not username or not password:
+        print("[ERROR] Set EVOGUARD_SMOKE_USERNAME and EVOGUARD_SMOKE_PASSWORD before running the smoke test.")
+        return 1
+
+    status, payload = request_json(
+        "/auth/login",
+        "POST",
+        {"username": username, "password": password},
+    )
+
+    if status != 200 or not payload.get("authenticated"):
+        print(f"[ERROR] Login failed: HTTP {status} {payload}")
+        return 1
+
+    print(f"[OK] Login: HTTP {status} user={payload.get('user', {}).get('username')}")
+
     checks = [
         ("Backend home", lambda: request_json("/")),
         ("Realtime status", lambda: request_json("/realtime_status")),
