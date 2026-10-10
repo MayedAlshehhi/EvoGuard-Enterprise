@@ -16,6 +16,31 @@ Render free-tier services may sleep when inactive. If the frontend login is slow
 
 Demo credentials are not stored in the repository. Create your private Admin account through environment variables before running or deploying the backend, then create instructor accounts from the Settings page.
 
+## GitHub Pages Deployment
+
+The frontend uses Create React App (`react-scripts`), not Vite. Its production
+output is `frontend/build`, not `dist`.
+
+In repository **Settings > Pages**, set **Source** to **GitHub Actions**.
+The `Deploy Frontend` workflow installs the locked frontend dependencies, runs
+the frontend tests, builds with `PUBLIC_URL=/EvoGuard-Enterprise`, and deploys
+only `frontend/build`. It runs when frontend files or the workflow change on
+`main`, and can also be started manually from the Actions tab.
+The old `gh-pages` branch is historical and is no longer the publishing source.
+
+The API URL defaults to `https://evoguard-enterprise-backend.onrender.com`.
+To use another backend, set the repository Actions variable
+`REACT_APP_API_BASE_URL` to its HTTPS origin and rerun the workflow. This value
+is public and embedded at build time; never put secrets in frontend variables.
+Do not set it to `.`: GitHub Pages cannot serve Flask API requests.
+
+Flask must be deployed separately (the repository includes `render.yaml`).
+For cross-origin login, the backend must allow
+`https://mayedalshehhi.github.io` through `EVOGUARD_CORS_ORIGIN` and use
+`EVOGUARD_COOKIE_SAMESITE=None` with `EVOGUARD_COOKIE_SECURE=true`.
+After deployment, verify the Pages login screen and the backend `/health`
+endpoint. Authenticated features also require a configured private account.
+
 ## Main Features
 
 - Backend-authenticated operator login.
